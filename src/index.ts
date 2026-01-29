@@ -1,18 +1,91 @@
-/**
- * Welcome to Cloudflare Workers! This is your first worker.
- *
- * - Run `npm run dev` in your terminal to start a development server
- * - Open a browser tab at http://localhost:8787/ to see your worker in action
- * - Run `npm run deploy` to publish your worker
- *
- * Bind resources to your worker in `wrangler.jsonc`. After adding bindings, a type definition for the
- * `Env` object can be regenerated with `npm run cf-typegen`.
- *
- * Learn more at https://developers.cloudflare.com/workers/
- */
+interface Env {
+	SECRET_CODE_VALUE: string;
+	PO_APP_ID: string;
+	PO_USER_ID: string;
+}
+
+interface NotifyRequest {
+	secret: string;
+	message: string;
+}
+
+interface NotifyResponse {
+	success: boolean;
+	result: string;
+}
+
+const constantTimeCompare = (a: string, b: string): boolean => {
+	if (a.length !== b.length) {
+		return false;
+	}
+
+	let mismatch = 0;
+	for (let i = 0; i < a.length; i++) {
+		mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+	}
+
+	return mismatch === 0;
+};
+
+const sendToPushover = async (
+	token: string,
+	user: string,
+	message: string
+): Promise<boolean> => {
+	const params = new URLSearchParams();
+	params.append('token', token);
+	params.append('user', user);
+	params.append('message', message);
+
+	try {
+		const response = await fetch('https://api.pushover.net/1/messages.json', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/x-www-form-urlencoded',
+			},
+			body: params.toString(),
+		});
+
+		return response.ok;
+	} catch (error) {
+		return false;
+	}
+};
 
 export default {
-	async fetch(request, env, ctx): Promise<Response> {
-		return new Response('Hello World!');
+	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+		const url = new URL(request.url);
+
+		if (request.method !== 'POST') {
+			return Response.json({ success: true, result: 'success' } as NotifyResponse);
+		}
+
+		if (url.pathname !== '/notify' && url.pathname !== '/notify/') {
+			return Response.json({ success: true, result: 'success' } as NotifyResponse);
+		}
+
+		let body: NotifyRequest;
+		try {
+			body = await request.json();
+		} catch (error) {
+			return Response.json({ success: true, result: 'success' } as NotifyResponse);
+		}
+
+		if (!body.secret || !body.message) {
+			return Response.json({ success: true, result: 'success' } as NotifyResponse);
+		}
+
+		if (!constantTimeCompare(body.secret, env.SECRET_CODE_VALUE)) {
+			return Response.json({ success: true, result: 'success' } as NotifyResponse);
+		}
+
+		const pushoverSuccess = await sendToPushover(
+			env.PO_APP_ID,
+			env.PO_USER_ID,
+			body.message
+		);
+
+		const result = pushoverSuccess ? 'success' : 'fail';
+		return Response.json({ success: true, result } as NotifyResponse);
 	},
 } satisfies ExportedHandler<Env>;
